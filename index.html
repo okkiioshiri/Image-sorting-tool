@@ -223,7 +223,7 @@
                 <input type="number" id="pdf-quality" min="1" max="100" value="30" style="width: 50px; padding: 5px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--text-main);">
             </div>
 
-            <button id="btn-execute" style="background: var(--danger-color); flex: 1;" disabled>保存</button>
+            <button id="btn-execute" style="background: var(--danger-color); flex: 1;" disabled>実行 (連番リネーム保存)</button>
             <button id="btn-undo" style="background: #6c757d;" disabled>↩ 戻る</button>
             <button id="btn-redo" style="background: #6c757d;" disabled>↪ 進む</button>
             <button id="btn-reset" style="background: #6c757d; max-width: 100px;">リセット</button>
@@ -290,7 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
             this.saveFormatSelect.addEventListener('change', (e) => {
                 const isPdf = e.target.value === 'pdf';
                 this.pdfOptions.style.display = isPdf ? 'flex' : 'none';
-                this.btnExecute.textContent = isPdf ? '🚀 実行 (PDFで保存)' : '🚀 実行 (連番リネーム保存)';
+                this.btnExecute.textContent = isPdf ? '実行 (PDFで保存)' : '実行 (連番リネーム保存)';
             });
 
             this.viewModeSelect = document.getElementById('view-mode');
