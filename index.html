@@ -176,7 +176,17 @@
         .list-item:hover { background: rgba(128, 128, 128, 0.1); }
         
         .selected { border-color: var(--primary-color) !important; background-color: rgba(74, 144, 226, 0.2) !important; }
-        .dragging { opacity: 0.5; }
+        
+        /* --- アクセシビリティと視認性の向上 --- */
+        button:focus-visible, select:focus-visible, input:focus-visible {
+            outline: 2px solid var(--primary-color);
+            outline-offset: 2px;
+        }
+        .dragging { 
+            opacity: 0.4; 
+            outline: 2px dashed var(--primary-color);
+            outline-offset: -2px;
+        }
 
         #progress-area { margin-bottom: 10px; display: none; flex-shrink: 0; }
         #progress-text { font-size: 12px; margin-bottom: 5px; text-align: left; }
@@ -345,8 +355,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // 2. DOM操作・UI管理クラス
     // ==========================================
     class UIManager {
-        constructor(onRequestImage) {
+        constructor(onRequestImage, onReleaseImage) {
             this.onRequestImage = onRequestImage;
+            this.onReleaseImage = onReleaseImage;
 
             this.btnSelect = document.getElementById('btn-select');
             this.btnExecute = document.getElementById('btn-execute');
@@ -406,15 +417,20 @@ document.addEventListener('DOMContentLoaded', () => {
             this.resizeObserver = new ResizeObserver(() => this.adjustGridWidth());
             this.resizeObserver.observe(this.mainArea);
 
-            this.imageObserver = new IntersectionObserver((entries, observer) => {
+            // メモリリーク対策：画面外に出た画像のメモリを解放する
+            this.imageObserver = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
+                    const img = entry.target;
                     if (entry.isIntersecting) {
-                        const img = entry.target;
                         if (!img.src) {
                             this.onRequestImage(img.dataset.id).then(url => {
                                 if (url) img.src = url;
                             });
-                            observer.unobserve(img); 
+                        }
+                    } else {
+                        if (img.src) {
+                            this.onReleaseImage(img.dataset.id);
+                            img.removeAttribute('src');
                         }
                     }
                 });
@@ -492,7 +508,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 thumbDiv.appendChild(nameDiv);
                 fragmentMain.appendChild(thumbDiv);
                 
-                if (!item.objectUrl) this.imageObserver.observe(img); 
+                // 常に監視対象にする
+                this.imageObserver.observe(img); 
                 
                 const listDiv = document.createElement('div');
                 listDiv.className = 'list-item';
@@ -504,27 +521,6 @@ document.addEventListener('DOMContentLoaded', () => {
             this.mainGrid.appendChild(fragmentMain);
             this.sidebarList.appendChild(fragmentSidebar);
             this.adjustGridWidth();
-        }
-
-        moveItems(draggedIds, targetId, isLogicalBefore) {
-            const targetThumb = targetId ? this.mainGrid.querySelector(`[data-id="${targetId}"]`) : null;
-            const targetList = targetId ? this.sidebarList.querySelector(`[data-id="${targetId}"]`) : null;
-
-            draggedIds.forEach(id => {
-                const thumb = this.mainGrid.querySelector(`[data-id="${id}"]`);
-                const listItem = this.sidebarList.querySelector(`[data-id="${id}"]`);
-                if (!thumb || !listItem) return;
-
-                if (targetThumb && targetList) {
-                    const insertNodeT = isLogicalBefore ? targetThumb : targetThumb.nextSibling;
-                    const insertNodeL = isLogicalBefore ? targetList : targetList.nextSibling;
-                    this.mainGrid.insertBefore(thumb, insertNodeT);
-                    this.sidebarList.insertBefore(listItem, insertNodeL);
-                } else {
-                    this.mainGrid.appendChild(thumb);
-                    this.sidebarList.appendChild(listItem);
-                }
-            });
         }
 
         setButtonsState(isProcessing, hasFiles) {
@@ -1837,7 +1833,10 @@ ${spineStr}</spine>
     // ==========================================
     class App {
         constructor() {
-            this.ui = new UIManager((id) => this.getImageUrl(id));
+            this.ui = new UIManager(
+                (id) => this.getImageUrl(id),
+                (id) => this.releaseImageUrl(id)
+            );
             this.fs = new FileSystemManager();
             this.sortManager = new SortManager(
                 this.ui, 
@@ -1876,6 +1875,14 @@ ${spineStr}</spine>
             const file = await item.handle.getFile();
             item.objectUrl = URL.createObjectURL(file);
             return item.objectUrl;
+        }
+
+        releaseImageUrl(id) {
+            const item = this.fileItems.find(i => i.id === id);
+            if (item && item.objectUrl) {
+                URL.revokeObjectURL(item.objectUrl);
+                item.objectUrl = null;
+            }
         }
 
         bindEvents() {
@@ -2077,7 +2084,8 @@ ${spineStr}</spine>
             
             this.fileItems = newItems;
             
-            this.ui.moveItems(draggedIds, targetId, isLogicalBefore);
+            this.ui.renderItems(this.fileItems);
+            this.sortManager.init();
             
             draggedIds.forEach(id => this.sortManager.selectById(id, true));
             this.sortManager.lastSelectedId = draggedIds[draggedIds.length - 1];
