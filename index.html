@@ -417,7 +417,6 @@ document.addEventListener('DOMContentLoaded', () => {
             this.resizeObserver = new ResizeObserver(() => this.adjustGridWidth());
             this.resizeObserver.observe(this.mainArea);
 
-            // メモリリーク対策：画面外に出た画像のメモリを解放する
             this.imageObserver = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
                     const img = entry.target;
@@ -508,7 +507,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 thumbDiv.appendChild(nameDiv);
                 fragmentMain.appendChild(thumbDiv);
                 
-                // 常に監視対象にする
                 this.imageObserver.observe(img); 
                 
                 const listDiv = document.createElement('div');
@@ -1678,6 +1676,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             let modifiedDate;
             if (metadata.modified) {
+                // ISO 8601 CCYY-MM-DDThh:mm:ssZ に準拠
                 modifiedDate = metadata.modified + 'T00:00:00Z';
             } else {
                 modifiedDate = new Date().toISOString().split('.')[0] + 'Z';
@@ -1690,7 +1689,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 let mime = 'image/jpeg';
                 if (ext === 'png') mime = 'image/png';
                 else if (ext === 'gif') mime = 'image/gif';
-                else if (ext === 'webp') mime = 'image/webp';
+                else if (ext === 'webp') {
+                    mime = 'image/webp';
+                    // 【注意】Kindle (KDP) 等はEPUB内のWebPを弾く可能性があります。
+                }
                 
                 const index = i + 1;
                 const isCover = (index === 1);
@@ -1701,13 +1703,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 const xhtmlId = isCover ? 'p-cover' : `p-${numStr}`;
                 const xhtmlName = isCover ? 'p-cover.xhtml' : `p-${numStr}.xhtml`;
                 
-                const bitmap = await createImageBitmap(file);
-                const w = bitmap.width; const h = bitmap.height;
-                bitmap.close();
+                const imgBuffer = new Uint8Array(await file.arrayBuffer());
+                
+                // 【修正】フルデコードによるメモリクラッシュを防ぐため、ヘッダからサイズを抽出
+                let w = 1000, h = 1414; // デフォルトフォールバックサイズ
+                const parsedSize = this._getImageSizeFromBuffer(imgBuffer);
+                if (parsedSize) {
+                    w = parsedSize.w;
+                    h = parsedSize.h;
+                } else {
+                    // ヘッダ解析に失敗した極稀なケースのみ、デコードして取得（安全策）
+                    try {
+                        const bitmap = await createImageBitmap(new Blob([imgBuffer]));
+                        w = bitmap.width; h = bitmap.height;
+                        bitmap.close();
+                    } catch (e) { console.warn('Could not determine image size for', item.name); }
+                }
                 
                 const xhtml = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html\n xmlns="http://www.w3.org/1999/xhtml"\n xmlns:epub="http://www.idpf.org/2007/ops"\n xml:lang="ja"\n>\n<head>\n<meta charset="UTF-8"/>\n<title>${title}</title>\n<link rel="stylesheet" type="text/css" href="../style/fixed-layout-jp.css"/>\n<meta name="viewport" content="width=${w}, height=${h}"/>\n</head>\n<body>\n<div class="main">\n\n<svg xmlns="http://www.w3.org/2000/svg" version="1.1"\n xmlns:xlink="http://www.w3.org/1999/xlink"\n width="100%" height="100%" viewBox="0 0 ${w} ${h}">\n<image width="${w}" height="${h}" xlink:href="../image/${imgName}"/>\n</svg>\n\n</div>\n</body>\n</html>`;
 
-                const imgBuffer = new Uint8Array(await file.arrayBuffer());
                 zip.addFile(`item/image/${imgName}`, imgBuffer);
                 zip.addFile(`item/xhtml/${xhtmlName}`, encoder.encode(xhtml));
                 
@@ -1716,7 +1730,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     manifestImage += `<item media-type="${mime}" id="${imgId}" href="image/${imgName}"/>\n`;
                 }
-                manifestXhtml += `<item media-type="application/xhtml+xml" id="${xhtmlId}" href="xhtml/${xhtmlName}" properties="svg" fallback="${imgId}"/>\n`;
+                
+                // 【修正】epubcheckでエラーになる不正な「fallback」属性を削除
+                manifestXhtml += `<item media-type="application/xhtml+xml" id="${xhtmlId}" href="xhtml/${xhtmlName}" properties="svg"/>\n`;
                 
                 navList += `<li><a href="xhtml/${xhtmlName}">本文${index}</a></li>\n`;
                 
@@ -1731,7 +1747,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 spineStr += `<itemref linear="yes" idref="${xhtmlId}"${spreadProp}/>\n`;
                 
                 onProgress(index, fileItems.length, item.name);
-                await new Promise(resolve => setTimeout(resolve, 0));
+                
+                // UIフリーズを防ぐためのYield
+                if (i % 5 === 0) await new Promise(resolve => setTimeout(resolve, 0));
             }
 
             const navXml = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html\n xmlns="http://www.w3.org/1999/xhtml"\n xmlns:epub="http://www.idpf.org/2007/ops"\n xml:lang="ja"\n>\n<head>\n<meta charset="UTF-8"/>\n<title>${title}</title>\n</head>\n<body>\n<nav epub:type="toc" id="toc">\n<h1>${title}</h1>\n<ol>\n${navList}</ol>\n</nav>\n</body>\n</html>`;
@@ -1825,6 +1843,62 @@ ${spineStr}</spine>
                     case '&': return '&amp;'; case '\'': return '&apos;'; case '"': return '&quot;';
                 }
             });
+        }
+
+        // ==========================================
+        // 【修正】画像デコードによるメモリ爆発を防ぐため、
+        // バイナリヘッダから直接縦横ピクセル数を抽出する超軽量パーサー
+        // ==========================================
+        _getImageSizeFromBuffer(buffer) {
+            const view = new DataView(buffer.buffer);
+            const length = buffer.length;
+            let offset = 0;
+
+            try {
+                // JPEG (FF D8)
+                if (buffer[0] === 0xFF && buffer[1] === 0xD8) {
+                    offset = 2;
+                    while (offset < length) {
+                        if (buffer[offset] !== 0xFF) break;
+                        const marker = buffer[offset + 1];
+                        offset += 2;
+                        if (marker === 0xC0 || marker === 0xC1 || marker === 0xC2) { // SOF0, SOF1, SOF2
+                            offset += 3;
+                            return { h: view.getUint16(offset, false), w: view.getUint16(offset + 2, false) };
+                        }
+                        offset += view.getUint16(offset, false);
+                    }
+                }
+                // PNG (89 50 4E 47)
+                else if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+                    if (length >= 24) return { w: view.getUint32(16, false), h: view.getUint32(20, false) };
+                }
+                // GIF (47 49 46)
+                else if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+                    if (length >= 10) return { w: view.getUint16(6, true), h: view.getUint16(8, true) };
+                }
+                // WebP (RIFF....WEBPVP8 )
+                else if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+                    if (length >= 30) {
+                        const format = String.fromCharCode(buffer[12], buffer[13], buffer[14], buffer[15]);
+                        if (format === 'VP8 ') {
+                            return { w: view.getUint16(26, true) & 0x3FFF, h: view.getUint16(28, true) & 0x3FFF };
+                        } else if (format === 'VP8L') {
+                            const b0 = buffer[21], b1 = buffer[22], b2 = buffer[23], b3 = buffer[24];
+                            return {
+                                w: 1 + (((b1 & 0x3F) << 8) | b0),
+                                h: 1 + (((b3 & 0xF) << 10) | (b2 << 2) | ((b1 & 0xC0) >> 6))
+                            };
+                        } else if (format === 'VP8X') {
+                            return {
+                                w: 1 + (buffer[24] | (buffer[25] << 8) | (buffer[26] << 16)),
+                                h: 1 + (buffer[27] | (buffer[28] << 8) | (buffer[29] << 16))
+                            };
+                        }
+                    }
+                }
+            } catch (e) { console.warn("Image header parse error", e); }
+            return null; // パース失敗時はnull
         }
     }
 
