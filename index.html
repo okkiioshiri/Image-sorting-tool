@@ -256,7 +256,7 @@
                 <input type="number" id="pdf-quality" min="1" max="100" value="30" style="width: 50px; padding: 5px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--text-main);">
             </div>
 
-            <button id="btn-execute" style="background: var(--danger-color); flex: 1;" disabled>実行 (連番リネーム保存)</button>
+            <button id="btn-execute" style="background: var(--danger-color); flex: 1;" disabled>実行</button>
             <button id="btn-undo" style="background: #6c757d;" disabled>↩ 戻る</button>
             <button id="btn-redo" style="background: #6c757d;" disabled>↪ 進む</button>
             <button id="btn-reset" style="background: #6c757d; max-width: 100px;">リセット</button>
@@ -378,21 +378,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 if (val === 'pdf-sheet') {
                     this.pdfQuality.value = 100;
-                    this.btnExecute.textContent = '実行 (一覧PDFで保存)';
+                    this.btnExecute.textContent = '実行';
                 } else {
                     if (isPdf && this.pdfQuality.value === '100') {
                         this.pdfQuality.value = 30;
                     }
                     if (val === 'pdf') {
-                        this.btnExecute.textContent = '実行 (PDFで保存)';
+                        this.btnExecute.textContent = '実行';
                     } else if (val === 'merge-rename') {
-                        this.btnExecute.textContent = '実行 (見開き結合・連番保存)';
+                        this.btnExecute.textContent = '実行';
                     } else if (val === 'merge-pdf') {
-                        this.btnExecute.textContent = '実行 (見開き結合・PDF保存)';
+                        this.btnExecute.textContent = '実行';
                     } else if (val === 'epub') {
-                        this.btnExecute.textContent = '実行 (EPUBで保存)';
+                        this.btnExecute.textContent = '実行';
                     } else {
-                        this.btnExecute.textContent = '実行 (連番リネーム保存)';
+                        this.btnExecute.textContent = '実行';
                     }
                 }
             });
@@ -1035,10 +1035,22 @@ document.addEventListener('DOMContentLoaded', () => {
             return { time, date };
         }
         
+        // 既存の同期メソッド（テキストや小規模データ用）
         addFile(name, dataUint8) {
+            this._addFileInternal(name, dataUint8, dataUint8.length, dataUint8);
+        }
+
+        // 【追加】大容量ファイル（Blob/File）用の非同期メソッド
+        async addFileAsync(name, blob) {
+            // CRC計算のために一時的に展開するが、スコープを抜ければGCされる
+            const dataUint8 = new Uint8Array(await blob.arrayBuffer());
+            this._addFileInternal(name, dataUint8, blob.size, blob);
+        }
+
+        // 【追加】内部処理の共通化
+        _addFileInternal(name, dataUint8, size, storeData) {
             const nameBytes = this.encoder.encode(name);
             const crc = this.crc32(dataUint8);
-            const size = dataUint8.length;
             const { time, date } = this.getDosTime();
             
             const lfh = new Uint8Array(30 + nameBytes.length);
@@ -1057,7 +1069,8 @@ document.addEventListener('DOMContentLoaded', () => {
             lfh.set(nameBytes, 30);
             
             this.parts.push(lfh);
-            this.parts.push(dataUint8);
+            // Uint8Arrayではなく、Blobの参照を保持することでメモリを節約
+            this.parts.push(storeData);
             
             const cd = new Uint8Array(46 + nameBytes.length);
             const cdView = new DataView(cd.buffer);
@@ -1076,7 +1089,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cd.set(nameBytes, 46);
             
             this.centralDirs.push(cd);
-            this.offset += lfh.length + dataUint8.length;
+            this.offset += lfh.length + size;
         }
         
         finish() {
@@ -1186,8 +1199,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const newName = String(i + 1).padStart(padLength, '0') + '.' + ext;
                 
                 const file = await item.handle.getFile();
-                const buffer = new Uint8Array(await file.arrayBuffer());
-                zip.addFile(newName, buffer);
+                // 【修正】メモリ爆発を防ぐため非同期メソッドを使用
+                await zip.addFileAsync(newName, file);
                 
                 onProgress(i + 1, fileItems.length, newName);
                 await new Promise(resolve => setTimeout(resolve, 0)); 
@@ -1485,8 +1498,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const blob = await this._mergeImagePair(pairs[i]);
                 const newName = String(i + 1).padStart(padLength, '0') + '.jpg';
                 
-                const buffer = new Uint8Array(await blob.arrayBuffer());
-                zip.addFile(newName, buffer);
+                // 【修正】メモリ爆発を防ぐため非同期メソッドを使用
+                await zip.addFileAsync(newName, blob);
                 
                 onProgress(i + 1, pairs.length, newName);
                 await new Promise(resolve => setTimeout(resolve, 0)); 
@@ -1676,7 +1689,6 @@ document.addEventListener('DOMContentLoaded', () => {
             
             let modifiedDate;
             if (metadata.modified) {
-                // ISO 8601 CCYY-MM-DDThh:mm:ssZ に準拠
                 modifiedDate = metadata.modified + 'T00:00:00Z';
             } else {
                 modifiedDate = new Date().toISOString().split('.')[0] + 'Z';
@@ -1691,7 +1703,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 else if (ext === 'gif') mime = 'image/gif';
                 else if (ext === 'webp') {
                     mime = 'image/webp';
-                    // 【注意】Kindle (KDP) 等はEPUB内のWebPを弾く可能性があります。
                 }
                 
                 const index = i + 1;
@@ -1703,18 +1714,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 const xhtmlId = isCover ? 'p-cover' : `p-${numStr}`;
                 const xhtmlName = isCover ? 'p-cover.xhtml' : `p-${numStr}.xhtml`;
                 
-                const imgBuffer = new Uint8Array(await file.arrayBuffer());
+                // 【修正】メモリ節約のため、ヘッダ解析用に先頭64KBだけ読み込む
+                const headerSlice = file.slice(0, 65536);
+                const imgBuffer = new Uint8Array(await headerSlice.arrayBuffer());
                 
-                // 【修正】フルデコードによるメモリクラッシュを防ぐため、ヘッダからサイズを抽出
-                let w = 1000, h = 1414; // デフォルトフォールバックサイズ
+                let w = 1000, h = 1414;
                 const parsedSize = this._getImageSizeFromBuffer(imgBuffer);
                 if (parsedSize) {
                     w = parsedSize.w;
                     h = parsedSize.h;
                 } else {
-                    // ヘッダ解析に失敗した極稀なケースのみ、デコードして取得（安全策）
                     try {
-                        const bitmap = await createImageBitmap(new Blob([imgBuffer]));
+                        const bitmap = await createImageBitmap(file);
                         w = bitmap.width; h = bitmap.height;
                         bitmap.close();
                     } catch (e) { console.warn('Could not determine image size for', item.name); }
@@ -1722,7 +1733,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 const xhtml = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html\n xmlns="http://www.w3.org/1999/xhtml"\n xmlns:epub="http://www.idpf.org/2007/ops"\n xml:lang="ja"\n>\n<head>\n<meta charset="UTF-8"/>\n<title>${title}</title>\n<link rel="stylesheet" type="text/css" href="../style/fixed-layout-jp.css"/>\n<meta name="viewport" content="width=${w}, height=${h}"/>\n</head>\n<body>\n<div class="main">\n\n<svg xmlns="http://www.w3.org/2000/svg" version="1.1"\n xmlns:xlink="http://www.w3.org/1999/xlink"\n width="100%" height="100%" viewBox="0 0 ${w} ${h}">\n<image width="${w}" height="${h}" xlink:href="../image/${imgName}"/>\n</svg>\n\n</div>\n</body>\n</html>`;
 
-                zip.addFile(`item/image/${imgName}`, imgBuffer);
+                // 【修正】Fileオブジェクトをそのまま渡し、メモリ爆発を防ぐ
+                await zip.addFileAsync(`item/image/${imgName}`, file);
                 zip.addFile(`item/xhtml/${xhtmlName}`, encoder.encode(xhtml));
                 
                 if (isCover) {
@@ -1731,10 +1743,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     manifestImage += `<item media-type="${mime}" id="${imgId}" href="image/${imgName}"/>\n`;
                 }
                 
-                // 【修正】epubcheckでエラーになる不正な「fallback」属性を削除
                 manifestXhtml += `<item media-type="application/xhtml+xml" id="${xhtmlId}" href="xhtml/${xhtmlName}" properties="svg"/>\n`;
                 
-                navList += `<li><a href="xhtml/${xhtmlName}">本文${index}</a></li>\n`;
+                // 【修正】目次（TOC）の崩壊を防ぐため、表紙のみを目次に登録する
+                if (isCover) {
+                    navList += `<li><a href="xhtml/${xhtmlName}">表紙</a></li>\n`;
+                }
                 
                 let spreadProp = '';
                 if (viewMode === 'spread-rtl') {
@@ -1845,10 +1859,6 @@ ${spineStr}</spine>
             });
         }
 
-        // ==========================================
-        // 【修正】画像デコードによるメモリ爆発を防ぐため、
-        // バイナリヘッダから直接縦横ピクセル数を抽出する超軽量パーサー
-        // ==========================================
         _getImageSizeFromBuffer(buffer) {
             const view = new DataView(buffer.buffer);
             const length = buffer.length;
@@ -1898,7 +1908,7 @@ ${spineStr}</spine>
                     }
                 }
             } catch (e) { console.warn("Image header parse error", e); }
-            return null; // パース失敗時はnull
+            return null; 
         }
     }
 
