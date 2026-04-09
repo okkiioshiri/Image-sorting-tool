@@ -2814,7 +2814,7 @@ ${spineStr}</spine>
                         this.ui.showToast(`ZIPファイルのダウンロードが完了しました。`);
                     }
                 } else if (saveFormat === 'pdf' || saveFormat === 'pdf-sheet' || saveFormat === 'merge-pdf') {
-                    const quality = parseInt(this.ui.pdfQuality.value, 10) || 30;
+                    const quality = Math.max(1, Math.min(100, parseInt(this.ui.pdfQuality.value, 10) || 30));
                     let success = false;
                     
                     if (saveFormat === 'pdf') {
