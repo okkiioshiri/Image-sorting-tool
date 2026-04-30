@@ -3401,23 +3401,24 @@ renderCacheList() {
 
             caches.forEach(cache => {
                 const itemDiv = document.createElement('div');
-                itemDiv.style.cssText = "display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border-color); gap: 10px;";
-                
-                const leftDiv = document.createElement('div');
-                leftDiv.style.cssText = "display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;";
+                // コンテナは Flexbox で横並びにし、要素間の隙間を 10px にする
+                itemDiv.style.cssText = "display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-color); gap: 10px;";
                 
                 const chk = document.createElement('input');
                 chk.type = 'checkbox';
                 chk.className = 'cache-check';
                 chk.dataset.id = cache.id;
-                chk.style.cursor = 'pointer';
-                chk.style.margin = '0';
+                // チェックボックスは縮小させない (flex-shrink: 0)
+                chk.style.cssText = "margin: 0; cursor: pointer; flex-shrink: 0;";
                 chk.addEventListener('change', () => this.updateCacheDeleteButton());
                 
                 const infoDiv = document.createElement('div');
-                infoDiv.style.cssText = "display: flex; flex-direction: column; flex: 1; min-width: 0;";
+                // テキストエリアは残りの空間を全て埋める (flex-grow: 1)
+                // min-width: 0; を指定することで、中身のテキストが溢れずに省略(...)されるようになる
+                infoDiv.style.cssText = "display: flex; flex-direction: column; flex-grow: 1; min-width: 0;";
                 
                 const titleSpan = document.createElement('span');
+                // 1行で表示し、はみ出た分を「...」にする
                 titleSpan.style.cssText = "font-size: 13px; font-weight: bold; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;";
                 titleSpan.textContent = cache.title;
                 
@@ -3427,18 +3428,19 @@ renderCacheList() {
                 
                 infoDiv.appendChild(titleSpan);
                 infoDiv.appendChild(dateSpan);
-                leftDiv.appendChild(chk);
-                leftDiv.appendChild(infoDiv);
                 
                 const btnRestore = document.createElement('button');
                 btnRestore.textContent = "復元";
+                // ボタンも縮小させない (flex-shrink: 0)
                 btnRestore.style.cssText = "padding: 6px 12px; background: var(--primary-color); color: #fff; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: bold; flex-shrink: 0;";
                 btnRestore.addEventListener('click', () => {
                     this.applyOrderFromText(cache.orderText);
                     this.ui.restoreModal.style.display = 'none';
                 });
 
-                itemDiv.appendChild(leftDiv);
+                // コンテナに 3つの要素を直接追加する
+                itemDiv.appendChild(chk);
+                itemDiv.appendChild(infoDiv);
                 itemDiv.appendChild(btnRestore);
                 
                 this.ui.restoreList.appendChild(itemDiv);
