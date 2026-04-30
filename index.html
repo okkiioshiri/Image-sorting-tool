@@ -631,10 +631,14 @@
 <div id="restore-modal" class="modal-overlay">
     <div class="modal-content" style="width: 500px; max-height: 80vh; display: flex; flex-direction: column;">
         <h2>保存された並び順の復元</h2>
-        <div style="margin-bottom: 10px;">
+        <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
             <label style="cursor: pointer; display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text-main);">
                 <input type="checkbox" id="restore-check-all" style="width: auto; margin: 0; cursor: pointer;"> 全て選択
             </label>
+            <select id="restore-sort-mode" style="font-size: 12px; padding: 4px 8px; margin: 0; height: auto; border-radius: 4px; background: var(--input-bg); color: var(--text-main); border: 1px solid var(--border-color); cursor: pointer;">
+                <option value="name" selected>名前順</option>
+                <option value="date">変更日時が新しい順</option>
+            </select>
         </div>
         <div id="restore-list" style="flex: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; background: var(--input-bg); padding: 0;">
         </div>
@@ -690,6 +694,7 @@ document.addEventListener('DOMContentLoaded', () => {
             this.restoreList = document.getElementById('restore-list');
             this.restoreCheckAll = document.getElementById('restore-check-all');
             this.btnDeleteSelectedCache = document.getElementById('btn-delete-selected-cache');
+            this.restoreSortMode = document.getElementById('restore-sort-mode');
 
             this.restoreBtnClose.addEventListener('click', () => this.restoreModal.style.display = 'none');
             
@@ -2539,13 +2544,16 @@ document.addEventListener('DOMContentLoaded', () => {
             this.ui.btnRestoreOrder.addEventListener('click', () => this.openRestoreModal());
             this.ui.btnExportSettings.addEventListener('click', () => this.handleExportSettings());
 
-            // 復元モーダル内のイベント登録
+// 復元モーダル内のイベント登録
             this.ui.restoreCheckAll.addEventListener('change', (e) => {
                 const checkboxes = this.ui.restoreList.querySelectorAll('.cache-check');
                 checkboxes.forEach(chk => chk.checked = e.target.checked);
                 this.updateCacheDeleteButton();
             });
             this.ui.btnDeleteSelectedCache.addEventListener('click', () => this.deleteSelectedCaches());
+            if (this.ui.restoreSortMode) {
+                this.ui.restoreSortMode.addEventListener('change', () => this.renderCacheList());
+            }
 
             const btnAutoSort = document.getElementById('btn-auto-sort');
             const modalAutoSort = document.getElementById('auto-sort-modal');
@@ -2670,7 +2678,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        async applyOrderFromText(text) {
+async applyOrderFromText(text, silent = false, customMsg = '') {
             const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
             if (lines.length === 0 || this.fileItems.length === 0) return;
             
@@ -2719,7 +2727,10 @@ document.addEventListener('DOMContentLoaded', () => {
             this.ui.renderItems(this.fileItems);
             this.sortManager.init();
             this.setProcessingState(false);
-            this.ui.showToast('テキストファイルから並び順と目次を復元しました。');
+            
+            if (!silent) {
+                this.ui.showToast(customMsg || 'テキストファイルから並び順と目次を復元しました。');
+            }
         }
 
         saveHistory() {
@@ -2791,14 +2802,13 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        finalizeLoad() {
+async finalizeLoad() {
             if (this.fileItems.length === 0) {
                 this.ui.showToast('❌ 画像が見つかりませんでした。', true);
                 return;
             }
             this.ui.renderItems(this.fileItems);
             
-            // 読み込み完了時にフォルダ名をUIに表示する
             if (this.ui.currentFolderName) {
                 this.ui.currentFolderName.textContent = this.sourceFolderName ? `[ ${this.sourceFolderName} ]` : '';
             }
@@ -2808,6 +2818,20 @@ document.addEventListener('DOMContentLoaded', () => {
             this.historyRedo =[];
             this.updateHistoryButtons();
             this.ui.setButtonsState(false, true);
+
+            // --- 同名のキャッシュがある場合は自動適用する ---
+            if (this.sourceFolderName) {
+                try {
+                    const caches = JSON.parse(localStorage.getItem('image_sorting_orders') || '[]');
+                    const match = caches.find(c => c.title === this.sourceFolderName);
+                    if (match && match.orderText) {
+                        await new Promise(res => setTimeout(res, 50));
+                        await this.applyOrderFromText(match.orderText, false, `前回保存された並び順を自動適用しました。`);
+                    }
+                } catch (e) {
+                    console.warn('キャッシュの自動適用に失敗しました:', e);
+                }
+            }
         }
 
         reorderFiles(draggedIds, targetId, isLogicalBefore) {
@@ -3097,7 +3121,7 @@ document.addEventListener('DOMContentLoaded', () => {
             this.saveSettings(baseName);
         }
 
-        // 通知を抑制できるように silent フラグを追加
+// 通知を抑制できるように silent フラグを追加
         handleExportOrder(silent = false) {
             if (this.fileItems.length === 0) return;
             const prefix = this.ui.outputFilename.value.trim();
@@ -3110,15 +3134,25 @@ document.addEventListener('DOMContentLoaded', () => {
             a.click();
             setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 
-            // ブラウザのキャッシュにも保存する
+            // ブラウザのキャッシュにも保存する (同名があれば上書き)
             try {
                 const dateStr = new Date().toLocaleString();
                 const title = baseName || '無題のリスト';
-                const id = Date.now().toString();
-                const cacheItem = { id, title, date: dateStr, orderText };
+                const currentTimestamp = Date.now();
+                
                 let caches = JSON.parse(localStorage.getItem('image_sorting_orders') || '[]');
-                caches.unshift(cacheItem); 
-                if(caches.length > 50) caches.pop(); // 最大50件まで保持
+                const existingIndex = caches.findIndex(c => c.title === title);
+                
+                if (existingIndex !== -1) {
+                    caches[existingIndex].date = dateStr;
+                    caches[existingIndex].orderText = orderText;
+                    caches[existingIndex].timestamp = currentTimestamp;
+                } else {
+                    const id = currentTimestamp.toString();
+                    const cacheItem = { id, title, date: dateStr, orderText, timestamp: currentTimestamp };
+                    caches.push(cacheItem); 
+                    if(caches.length > 50) caches.shift(); // 最大50件まで保持 (古いものを削除)
+                }
                 localStorage.setItem('image_sorting_orders', JSON.stringify(caches));
             } catch(e) {
                 console.warn('キャッシュの保存に失敗しました:', e);
@@ -3389,6 +3423,20 @@ renderCacheList() {
             } catch(e) {
                 caches = [];
             }
+
+            // --- ソート処理 ---
+            const sortMode = this.ui.restoreSortMode ? this.ui.restoreSortMode.value : 'name';
+            caches.sort((a, b) => {
+                if (sortMode === 'name') {
+                    // 名前順 (数字を自然順に考慮)
+                    return a.title.localeCompare(b.title, undefined, { numeric: true });
+                } else {
+                    // 日時順 (新しい順)
+                    const timeA = a.timestamp || parseInt(a.id, 10) || 0;
+                    const timeB = b.timestamp || parseInt(b.id, 10) || 0;
+                    return timeB - timeA;
+                }
+            });
             
             this.ui.restoreList.innerHTML = '';
             this.ui.restoreCheckAll.checked = false;
@@ -3401,24 +3449,19 @@ renderCacheList() {
 
             caches.forEach(cache => {
                 const itemDiv = document.createElement('div');
-                // コンテナは Flexbox で横並びにし、要素間の隙間を 10px にする
                 itemDiv.style.cssText = "display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-color); gap: 10px;";
                 
                 const chk = document.createElement('input');
                 chk.type = 'checkbox';
                 chk.className = 'cache-check';
                 chk.dataset.id = cache.id;
-                // チェックボックスは縮小させない (flex-shrink: 0)
                 chk.style.cssText = "margin: 0; cursor: pointer; flex-shrink: 0;";
                 chk.addEventListener('change', () => this.updateCacheDeleteButton());
                 
                 const infoDiv = document.createElement('div');
-                // テキストエリアは残りの空間を全て埋める (flex-grow: 1)
-                // min-width: 0; を指定することで、中身のテキストが溢れずに省略(...)されるようになる
                 infoDiv.style.cssText = "display: flex; flex-direction: column; flex-grow: 1; min-width: 0;";
                 
                 const titleSpan = document.createElement('span');
-                // 1行で表示し、はみ出た分を「...」にする
                 titleSpan.style.cssText = "font-size: 13px; font-weight: bold; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;";
                 titleSpan.textContent = cache.title;
                 
@@ -3431,14 +3474,12 @@ renderCacheList() {
                 
                 const btnRestore = document.createElement('button');
                 btnRestore.textContent = "復元";
-                // ボタンも縮小させない (flex-shrink: 0)
                 btnRestore.style.cssText = "padding: 6px 12px; background: var(--primary-color); color: #fff; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: bold; flex-shrink: 0;";
                 btnRestore.addEventListener('click', () => {
                     this.applyOrderFromText(cache.orderText);
                     this.ui.restoreModal.style.display = 'none';
                 });
 
-                // コンテナに 3つの要素を直接追加する
                 itemDiv.appendChild(chk);
                 itemDiv.appendChild(infoDiv);
                 itemDiv.appendChild(btnRestore);
