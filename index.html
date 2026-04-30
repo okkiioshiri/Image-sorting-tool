@@ -640,7 +640,7 @@
                 <option value="date">変更日時が新しい順</option>
             </select>
         </div>
-        <div id="restore-list" style="flex: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; background: var(--input-bg); padding: 0;">
+        <div id="restore-list" style="flex: 1; overflow-y: auto; overflow-x: hidden; border: 1px solid var(--border-color); border-radius: 4px; background: var(--input-bg); padding: 0; box-sizing: border-box;">
         </div>
         <div class="modal-actions" style="margin-top: 15px;">
             <button id="restore-btn-close" style="background: #6c757d;">閉じる</button>
@@ -3424,14 +3424,12 @@ renderCacheList() {
                 caches = [];
             }
 
-            // --- ソート処理 ---
+            // ソート処理
             const sortMode = this.ui.restoreSortMode ? this.ui.restoreSortMode.value : 'name';
             caches.sort((a, b) => {
                 if (sortMode === 'name') {
-                    // 名前順 (数字を自然順に考慮)
                     return a.title.localeCompare(b.title, undefined, { numeric: true });
                 } else {
-                    // 日時順 (新しい順)
                     const timeA = a.timestamp || parseInt(a.id, 10) || 0;
                     const timeB = b.timestamp || parseInt(b.id, 10) || 0;
                     return timeB - timeA;
@@ -3448,33 +3446,70 @@ renderCacheList() {
             }
 
             caches.forEach(cache => {
+                // 1. 全体を囲むコンテナ
                 const itemDiv = document.createElement('div');
-                itemDiv.style.cssText = "display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-color); gap: 10px;";
+                itemDiv.style.display = 'flex';
+                itemDiv.style.alignItems = 'center';
+                itemDiv.style.justifyContent = 'space-between';
+                itemDiv.style.padding = '8px 12px';
+                itemDiv.style.borderBottom = '1px solid var(--border-color)';
+                itemDiv.style.gap = '10px';
+                itemDiv.style.width = '100%';
+                itemDiv.style.boxSizing = 'border-box';
                 
+                // 2. 左端のチェックボックス
                 const chk = document.createElement('input');
                 chk.type = 'checkbox';
                 chk.className = 'cache-check';
                 chk.dataset.id = cache.id;
-                chk.style.cssText = "margin: 0; cursor: pointer; flex-shrink: 0;";
+                chk.style.margin = '0';
+                chk.style.cursor = 'pointer';
+                chk.style.flexShrink = '0';
+                chk.style.width = '16px';
+                chk.style.height = '16px';
                 chk.addEventListener('change', () => this.updateCacheDeleteButton());
                 
+                // 3. 中央のテキスト領域
                 const infoDiv = document.createElement('div');
-                infoDiv.style.cssText = "display: flex; flex-direction: column; flex-grow: 1; min-width: 0;";
+                infoDiv.style.display = 'flex';
+                infoDiv.style.flexDirection = 'column';
+                infoDiv.style.flexGrow = '1';
+                infoDiv.style.minWidth = '0';
+                infoDiv.style.overflow = 'hidden';
                 
                 const titleSpan = document.createElement('span');
-                titleSpan.style.cssText = "font-size: 13px; font-weight: bold; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;";
+                titleSpan.style.fontSize = '13px';
+                titleSpan.style.fontWeight = 'bold';
+                titleSpan.style.color = 'var(--text-main)';
+                titleSpan.style.whiteSpace = 'nowrap';
+                titleSpan.style.overflow = 'hidden';
+                titleSpan.style.textOverflow = 'ellipsis';
+                titleSpan.style.display = 'block';
                 titleSpan.textContent = cache.title;
                 
                 const dateSpan = document.createElement('span');
-                dateSpan.style.cssText = "font-size: 11px; color: var(--text-sub);";
+                dateSpan.style.fontSize = '11px';
+                dateSpan.style.color = 'var(--text-sub)';
+                dateSpan.style.display = 'block';
                 dateSpan.textContent = cache.date;
                 
                 infoDiv.appendChild(titleSpan);
                 infoDiv.appendChild(dateSpan);
                 
+                // 4. 右端の復元ボタン
                 const btnRestore = document.createElement('button');
                 btnRestore.textContent = "復元";
-                btnRestore.style.cssText = "padding: 6px 12px; background: var(--primary-color); color: #fff; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: bold; flex-shrink: 0;";
+                btnRestore.style.padding = '6px 12px';
+                btnRestore.style.background = 'var(--primary-color)';
+                btnRestore.style.color = '#fff';
+                btnRestore.style.border = 'none';
+                btnRestore.style.borderRadius = '4px';
+                btnRestore.style.fontSize = '12px';
+                btnRestore.style.fontWeight = 'bold';
+                btnRestore.style.cursor = 'pointer';
+                btnRestore.style.flexShrink = '0';
+                btnRestore.style.whiteSpace = 'nowrap';
+                
                 btnRestore.addEventListener('click', () => {
                     this.applyOrderFromText(cache.orderText);
                     this.ui.restoreModal.style.display = 'none';
